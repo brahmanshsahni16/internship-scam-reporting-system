@@ -93,7 +93,6 @@ The database is normalized up to Third Normal Form (3NF) to eliminate redundancy
 ## 👨‍💻 Authors  
 - Brahmansh Singh Sahni 
 - Samarth Gulati 
-- Team Member 3  
 
 ---
 
