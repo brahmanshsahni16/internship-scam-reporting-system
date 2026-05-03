@@ -166,7 +166,7 @@ INSERT INTO Reviews (job_id, company_id, reviewed_by, rating, title, body, is_an
 (4, 4, 2, 1, 'Fraud company',           'This is a ponzi scheme disguised as a job offer.',           TRUE);
 
 -- ============================================================
---  USEFUL QUERIES FOR VIVA / DEMO
+--  USEFUL QUERIES
 -- ============================================================
 
 -- Q1: All flagged job postings with company name
