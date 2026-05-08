@@ -4,7 +4,6 @@
 
 CREATE DATABASE IF NOT EXISTS scam_detection_db;
 USE scam_detection_db;
-
 -- ─────────────────────────────────────────────
 -- 1. USERS  (students + admins)
 -- ─────────────────────────────────────────────
@@ -117,6 +116,155 @@ CREATE TABLE Reviews (
     CONSTRAINT chk_rating      CHECK (rating BETWEEN 1 AND 5),
     CONSTRAINT chk_review_target CHECK (job_id IS NOT NULL OR company_id IS NOT NULL)
 );
+
+
+-- ============================================================
+-- TRIGGERS
+-- ============================================================
+
+DELIMITER $$
+
+-- 1. Prevent duplicate report by same user for same job
+CREATE TRIGGER prevent_duplicate_report
+BEFORE INSERT ON Reports
+FOR EACH ROW
+BEGIN
+    IF NEW.job_id IS NOT NULL AND EXISTS (
+        SELECT 1 FROM Reports
+        WHERE job_id = NEW.job_id
+        AND reported_by = NEW.reported_by
+    ) THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'You have already reported this job posting.';
+    END IF;
+END$$
+
+-- 2. Auto-flag job when reports >= 3
+CREATE TRIGGER auto_flag_job
+AFTER INSERT ON Reports
+FOR EACH ROW
+BEGIN
+    DECLARE cnt INT;
+
+    IF NEW.job_id IS NOT NULL THEN
+        SELECT COUNT(*) INTO cnt
+        FROM Reports
+        WHERE job_id = NEW.job_id;
+
+        IF cnt >= 3 THEN
+            UPDATE Job_Postings
+            SET status = 'flagged'
+            WHERE job_id = NEW.job_id;
+        END IF;
+    END IF;
+END$$
+
+-- 3. Set default status to pending
+CREATE TRIGGER set_default_report_status
+BEFORE INSERT ON Reports
+FOR EACH ROW
+BEGIN
+    IF NEW.status IS NULL OR NEW.status = '' THEN
+        SET NEW.status = 'pending';
+    END IF;
+END$$
+
+DELIMITER ;
+
+-- ============================================================
+-- STORED PROCEDURES
+-- ============================================================
+
+DELIMITER $$
+
+-- 1. Submit report
+CREATE PROCEDURE submit_report(
+    IN p_jid INT,
+    IN p_uid INT,
+    IN p_reason VARCHAR(50),
+    IN p_description TEXT
+)
+BEGIN
+    INSERT INTO Reports (job_id, reported_by, reason, description)
+    VALUES (p_jid, p_uid, p_reason, p_description);
+
+    SELECT CONCAT('Report submitted for Job ID ', p_jid) AS message;
+END$$
+
+-- 2. Get flagged jobs
+CREATE PROCEDURE get_flagged_jobs()
+BEGIN
+    SELECT 
+        jp.job_id,
+        jp.title,
+        c.company_name,
+        COUNT(r.report_id) AS total_reports
+    FROM Job_Postings jp
+    JOIN Companies c ON c.company_id = jp.company_id
+    LEFT JOIN Reports r ON r.job_id = jp.job_id
+    WHERE jp.status = 'flagged'
+    GROUP BY jp.job_id, jp.title, c.company_name;
+END$$
+
+-- 3. Verify company + log
+CREATE PROCEDURE verify_company(
+    IN p_company_id INT,
+    IN p_admin_id INT,
+    IN p_status VARCHAR(20),
+    IN p_note TEXT
+)
+BEGIN
+    -- Update company verification
+    UPDATE Companies
+    SET is_verified = (p_status = 'verified')
+    WHERE company_id = p_company_id;
+
+    -- Insert log
+    INSERT INTO Verification
+    (entity_type, entity_id, verified_by, status, notes, verified_at)
+    VALUES
+    ('company', p_company_id, p_admin_id, p_status, p_note, NOW());
+
+    SELECT CONCAT('Company ', p_company_id, ' marked as ', p_status) AS message;
+END$$
+
+DELIMITER ;
+
+-- ============================================================
+-- FUNCTIONS
+-- ============================================================
+
+DELIMITER $$
+
+-- 1. Get report count
+CREATE FUNCTION get_report_count(p_job_id INT)
+RETURNS INT
+DETERMINISTIC
+BEGIN
+    DECLARE total INT;
+
+    SELECT COUNT(*) INTO total
+    FROM Reports
+    WHERE job_id = p_job_id;
+
+    RETURN total;
+END$$
+
+-- 2. Get average rating
+CREATE FUNCTION get_avg_company_rating(p_company_id INT)
+RETURNS DECIMAL(4,2)
+DETERMINISTIC
+BEGIN
+    DECLARE avg_r DECIMAL(4,2);
+
+    SELECT AVG(rating) INTO avg_r
+    FROM Reviews
+    WHERE company_id = p_company_id;
+
+    RETURN avg_r;
+END$$
+
+DELIMITER ;
 
 -- ============================================================
 --  SAMPLE / SEED DATA
